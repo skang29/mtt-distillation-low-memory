@@ -334,20 +334,19 @@ def main(args):
         syn_images = image_syn
 
         y_hat = label_syn.to(args.device)
+        y_hat.requires_grad = False
 
         param_loss_list = []
         param_dist_list = []
-        indices_chunks = []
+        
+        num_chunks = (args.syn_steps * args.batch_syn) // len(syn_images) + int((args.syn_steps * args.batch_syn) % len(syn_images) != 0)
+        indices = torch.cat([torch.randperm(len(syn_images)) for _ in range(num_chunks)], 0)[:args.syn_steps * args.batch_syn]
+        indices_chunks = list(torch.split(indices, args.batch_syn))
+        xy_list = []
 
+        syn_lr_detach = syn_lr.detach()
         for step in range(args.syn_steps):
-
-            if not indices_chunks:
-                indices = torch.randperm(len(syn_images))
-                indices_chunks = list(torch.split(indices, args.batch_syn))
-
-            these_indices = indices_chunks.pop()
-
-
+            these_indices = indices_chunks[step]
             x = syn_images[these_indices]
             this_y = y_hat[these_indices]
 
@@ -358,39 +357,59 @@ def main(args):
             if args.dsa and (not args.no_aug):
                 x = DiffAugment(x, args.dsa_strategy, param=args.dsa_param)
 
+            xy_list.append((x, this_y, these_indices))
+
+            x_detach = x.detach()
+            
             if args.distributed:
-                forward_params = student_params[-1].unsqueeze(0).expand(torch.cuda.device_count(), -1)
+                forward_params = student_params[step].unsqueeze(0).expand(torch.cuda.device_count(), -1)
             else:
-                forward_params = student_params[-1]
-            x = student_net(x, flat_param=forward_params)
-            ce_loss = criterion(x, this_y)
+                forward_params = student_params[step]
 
-            grad = torch.autograd.grad(ce_loss, student_params[-1], create_graph=True)[0]
+            forward_params = forward_params.detach().clone()
+            forward_params.requires_grad = True
 
-            student_params.append(student_params[-1] - syn_lr * grad)
+            output = student_net(x_detach, flat_param=forward_params)
+            ce_loss = criterion(output, this_y)
 
+            grad = torch.autograd.grad(ce_loss, forward_params, create_graph=True)[0]
 
-        param_loss = torch.tensor(0.0).to(args.device)
-        param_dist = torch.tensor(0.0).to(args.device)
+            # update student parameter
+            student_params.append(forward_params.detach() - syn_lr_detach * grad.detach())
 
-        param_loss += torch.nn.functional.mse_loss(student_params[-1], target_params, reduction="sum")
-        param_dist += torch.nn.functional.mse_loss(starting_params, target_params, reduction="sum")
-
-        param_loss_list.append(param_loss)
-        param_dist_list.append(param_dist)
-
-
-        param_loss /= num_params
-        param_dist /= num_params
-
-        param_loss /= param_dist
-
-        grand_loss = param_loss
+        # Prepare for gradient accumulation
+        param_dist = torch.nn.functional.mse_loss(starting_params, target_params, reduction="sum").clone().detach()
 
         optimizer_img.zero_grad()
         optimizer_lr.zero_grad()
+        
+        param_loss = None
+        grand_loss = None
+        gradient_catcher = None
 
-        grand_loss.backward()
+        for step in reversed(range(args.syn_steps)):
+            x, this_y, these_indices = xy_list[step]
+
+            forward_params = student_params[step].detach().clone()
+            forward_params.requires_grad = True
+
+            # theta and x both get gradients
+            output = student_net(x, flat_param=forward_params)
+            ce_loss = criterion(output, this_y)
+            grad = torch.autograd.grad(ce_loss, forward_params, create_graph=True)[0]
+
+            new_params = forward_params - syn_lr * grad
+
+            if gradient_catcher is None:
+                param_loss = torch.nn.functional.mse_loss(new_params, target_params, reduction="sum")
+                grand_loss = param_loss / param_dist
+                grand_loss.backward()
+            else:
+                new_params.backward(gradient_catcher)
+            gradient_catcher = forward_params.grad.detach().clone()
+
+        param_loss_list.append(param_loss / num_params)
+        param_dist_list.append(param_dist / num_params)
 
         optimizer_img.step()
         optimizer_lr.step()
@@ -473,5 +492,4 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     main(args)
-
 
