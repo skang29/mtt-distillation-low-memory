@@ -1,3 +1,15 @@
+# Memory-efficient \<Dataset Distillation by Matching Training Trajectories\>
+
+In the existing "Dataset Distillation by Matching Training Trajectories ([MTT](https://arxiv.org/abs/2203.11932))" paper, I tried to reproduce the code from the "Scaling Up Dataset Distillation to ImageNet-1K with Constant Memory ([TESLA](https://proceedings.mlr.press/v202/cui23e/cui23e.pdf))" paper, which proposes a VRAM efficient algorithm. However, the code for the latter wasn't publicly available. Although I attempted to reproduce it, I couldn't achieve the metrics stated in the paper. Upon a detailed analysis of the paper, I recognized a mathematical error. In Equation 6 of the paper, it was stated that for a specific time step, $t+i$, the gradient with respect to the synthetic image $X_{t + i}$ only needs to be calculated for that step. However, the authors overlooked that $\theta_{t+i+1}$ is a function of $X_{t + i}$. Thus, the gradient for $X_{t + i}$ cannot only be calculated for the specific time step. Through experimentation, I confirmed that the gradient calculated from MTT significantly differs from the gradient calculated from TESLA.
+
+Despite MTT currently being the most effective method for dataset distillation, it's challenging to use it extensively due to VRAM constraints. Therefore, to advance efficient dataset distillation research, I modified parts of the existing MTT code in distill.py to reduce VRAM usage, albeit at the cost of some computational efficiency. Specifically, I designed it to carry out Inner loop computations twice. In the first inner loop, parameter updates are made. In the second inner loop, the backpropagation process is executed identically, but the entire graph is not maintained. Instead, calculations are made at every time step, reducing VRAM requirements.
+
+Although I didn't measure the exact memory reduction or execution time, I confirmed that it operates on an A6000 (with 49GB VRAM) in the ImageNette IPC=10 ConvNetD5 environment without setting a synthetic dataset batch size.
+
+
+Contents below are identical to the original code released from the author of MTT.
+
+
 # Dataset Distillation by Matching Training Trajectories
 
 ### [Project Page](https://georgecazenavette.github.io/mtt-distillation/) | [Paper](https://arxiv.org/abs/2203.11932)
