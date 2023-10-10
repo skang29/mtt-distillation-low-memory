@@ -9,7 +9,7 @@ Although I didn't measure the exact memory reduction or execution time, I confir
 ### Reproducing results
 | Dataset  | IPC | Official | Reproduced |
 | ------------- | ------------- | ------------- | ------------- |
-| CIFAR10  | 1 | 24.3 ± 0.3 | 24.3 ± 0.2 |
+| CIFAR100  | 1 | 24.3 ± 0.3 | 24.3 ± 0.2 |
 |   | 10 | 40.1 ± 0.4 | 39.6 ± 0.2 |
 |   | 50 | 47.7 ± 0.2 | 47.0 ± 0.2 |
 | ImageNette  | 10 | 63.0 ± 1.3 | 63.9 ± 1.9 |
